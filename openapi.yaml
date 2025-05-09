@@ -1,0 +1,118 @@
+openapi: 3.0.0
+info:
+  title: Breach Lookup API
+  version: 1.0.0
+servers:
+  - url: http://localhost:3000
+paths:
+  /api/request-code:
+    post:
+      summary: Request a one-time verification code for an email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Code sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        '400':
+          description: Bad request (missing or invalid email)
+        '500':
+          description: Server error sending email
+
+  /api/verify-code:
+    post:
+      summary: Verify the received code and issue a JWT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - code
+              properties:
+                email:
+                  type: string
+                  format: email
+                code:
+                  type: string
+      responses:
+        '200':
+          description: Code verified, JWT issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+        '400':
+          description: Bad request (missing fields)
+        '401':
+          description: Unauthorized (invalid code)
+
+  /api/breaches:
+    get:
+      summary: Retrieve breach records for the authenticated user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Array of breach records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BreachRecord'
+        '401':
+          description: Unauthorized (missing or invalid token)
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    BreachRecord:
+      type: object
+      properties:
+        email_hash:
+          type: string
+        password:
+          type: string
+        is_hash:
+          type: boolean
+        hash_type:
+          type: string
+        email:
+          type: string
+        source:
+          type: string
+      required:
+        - email_hash
+        - password
+        - is_hash
+        - hash_type
+        - email
+        - source

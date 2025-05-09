@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Breach Lookup Service</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&family=Roboto+Slab:wght@400;700&display=swap" rel="stylesheet">
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <style>
+    body { font-family: 'Open Sans', sans-serif; line-height:1.6; color:#333; background:#f9f9f9; margin:0; padding:0; }
+    header, main { max-width:600px; margin:2rem auto; padding:1rem; background:#fff; border-radius:8px; box-shadow:0 2px 6px rgba(0,0,0,0.1); }
+    header h1, header h2, header h3 { font-family:'Roboto Slab', serif; color:#222; margin-bottom:0.5rem; }
+    header p { margin-top:0; }
+    form { margin-top:1.5rem; }
+    label { display:block; margin-bottom:0.5rem; font-weight:600; }
+    input[type="email"], input[type="text"], button { width:100%; padding:0.75rem; margin-bottom:1rem; border:1px solid #ccc; border-radius:4px; font-size:1rem; }
+    button { background:#007BFF; color:#fff; border:none; cursor:pointer; font-weight:600; }
+    button:disabled { background:#ccc; cursor:not-allowed; }
+    #results { margin-top:1rem; }
+    .record { padding:0.75rem; border-bottom:1px solid #eee; }
+    .hidden { display:none; }
+    /* Toast alert */
+    #toast {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0,0,0,0.8);
+      color: #fff;
+      padding: 1rem 1.5rem;
+      border-radius: 6px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      font-size: 1rem;
+      text-align: center;
+      z-index: 1000;
+      display: none;
+      max-width: 80%;
+    }
+  </style>
+</head>
+<body>
+  <div id="toast"></div>
+  <header>
+    <h1>Breach Lookup Service</h1>
+    <p>Enter your email below and verify ownership via a 6-digit code. Once verified, you'll be able to view any breach records associated with your email.</p>
+  </header>
+  <main>
+    <div id="step1">
+      <form id="request-form">
+        <label for="email">Email Address</label>
+        <input type="email" id="email" required placeholder="you@example.com">
+        <div class="cf-turnstile" data-sitekey="0x4AAAAAABbrd4R2v-G6dzov" data-callback="onTurnstileSuccess" data-error-callback="onTurnstileError"></div>
+        <button type="submit">Send Verification Code</button>
+      </form>
+    </div>
+    <div id="step2" class="hidden">
+      <form id="verify-form">
+        <label for="code">Verification Code</label>
+        <input type="text" id="code" maxlength="6" required placeholder="123456">
+        <button type="submit">Verify Code</button>
+      </form>
+    </div>
+    <div id="step3" class="hidden">
+      <button id="lookup-btn">Lookup Breach Records</button>
+    </div>
+    <div id="results" class="hidden"></div>
+    <button id="reset-btn" class="hidden">Start Over</button>
+  </main>
+  <script>
+    let turnstileToken = '';
+    function onTurnstileSuccess(token) { turnstileToken = token; }
+    function onTurnstileError() { turnstileToken = ''; showToast('CAPTCHA error, please retry'); }
+
+    const apiBase = '';
+    let jwtToken = '';
+    const step1 = document.getElementById('step1');
+    const step2 = document.getElementById('step2');
+    const step3 = document.getElementById('step3');
+    const resultsDiv = document.getElementById('results');
+    const resetBtn = document.getElementById('reset-btn');
+    const toast = document.getElementById('toast');
+
+    function showToast(msg, duration=3000) {
+      toast.textContent = msg;
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, duration);
+    }
+
+    document.getElementById('request-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const email = document.getElementById('email').value.trim();
+      if (!turnstileToken) { showToast('Please complete the CAPTCHA'); return; }
+      const res = await fetch(apiBase + '/api/request-code', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ email, turnstileToken })
+      });
+      if (res.ok) {
+        showToast('Verification code sent to ' + email);
+        step1.classList.add('hidden');
+        step2.classList.remove('hidden');
+      } else {
+        const err = await res.json().catch(()=>null);
+        showToast('Failed to send code: ' + (err?.error || res.status));
+        window.turnstile.reset(); turnstileToken = '';
+      }
+    });
+
+    document.getElementById('verify-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const email = document.getElementById('email').value.trim();
+      const code = document.getElementById('code').value.trim();
+      const res = await fetch(apiBase + '/api/verify-code', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ email, code })
+      });
+      if (res.ok) {
+        const json = await res.json(); jwtToken = json.token;
+        showToast('Code verified');
+        step2.classList.add('hidden');
+        step3.classList.remove('hidden');
+      } else {
+        showToast('Invalid code');
+      }
+    });
+
+    document.getElementById('lookup-btn').addEventListener('click', async () => {
+      const res = await fetch(apiBase + '/api/breaches', { headers:{ 'Authorization':'Bearer '+jwtToken }});
+      if (res.ok) {
+        const records = await res.json();
+        resultsDiv.innerHTML = records.length
+          ? records.map(r => `<div class="record"><strong>Source:</strong> ${r.source}<br><strong>Email:</strong> ${r.email}<br><strong>Password:</strong> ${r.password}<br><strong>Hash:</strong> ${r.is_hash}</div>`).join('')
+          : '<p>No breach records found.</p>';
+        resultsDiv.classList.remove('hidden');
+        resetBtn.classList.remove('hidden');
+      } else {
+        showToast('Lookup failed');
+      }
+    });
+
+    resetBtn.addEventListener('click', () => {
+      jwtToken = ''; turnstileToken = '';
+      document.getElementById('email').value = '';
+      document.getElementById('code').value = '';
+      step1.classList.remove('hidden');
+      step2.classList.add('hidden');
+      step3.classList.add('hidden');
+      resultsDiv.classList.add('hidden');
+      resetBtn.classList.add('hidden');
+      window.turnstile.reset();
+    });
+  </script>
+</body>
+</html>
