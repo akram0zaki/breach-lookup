@@ -1,9 +1,10 @@
 # Breach Lookup Service
 
-This repository provides a self-hosted breach lookup service (UI + API) to verify email ownership and search pre-processed breach data shards.
+
+This project hosts a secure and privacy-respecting breach lookup service that allows users to check if their email addresses were found in known breach compilations. 
+As a proof of concept, this project is published on a Raspberry Pi, backed by JSONL shard storage and served through a lightweight Express web service with email verification.
 
 Password managers sometimes alert the user that an account of theirs has appeared in one or more breaches. This message is often a vague one and doesn't tell the user where it has appeared, or exactly what data  was compromised.
-
 I thought it can be useful if authenticated owners of an an email address can learn exactly what data of theirs was compromised in the past, and this service is created to serve this purpose.
 
 The following measures were taken to ensure privacy:
@@ -20,6 +21,25 @@ I am hosting this project online at [AZ Projects](https://breach-lookup.azprojec
 The installation instructions below reflect this setup for educational purpose only, to demonstrate how a service can be published with free hosting, TLS certificates, WAF protection, and free captcha challenge, all on low-specs hardware.
 
 It's important to pay attention to security concerns if you plan to host public pages. Place your server in a De-militarized Zone (DMZ) isolated from the rest of your network, continuously harden your OS and software stack, don't store any other sensitive information on the same device or network, and have security monitoring in place.
+
+---
+
+## OWASP Security Controls
+
+To ensure the lookup service is safe and resilient against common attack vectors, multiple protections aligned with the [OWASP Top 10](https://owasp.org/Top10/) were implemented:
+
+| OWASP Threat | Protection Implemented |
+|--------------|------------------------|
+| A01: Broken Access Control | JWT token required for `/api/breaches`. Only verified users can access data. |
+| A02: Cryptographic Failures | All email addresses are hashed using HMAC-SHA256. No plaintext email is persisted. TLS is enforced via Cloudflare Tunnel. |
+| A03: Injection | No dynamic SQL or command injection vectors present. Input is sanitized. |
+| A04: Insecure Design | CAPTCHA and rate limits mitigate automated abuse. Clear separation between verification and data access. |
+| A05: Security Misconfiguration | `helmet` sets secure HTTP headers. Express fingerprint removed. Proper CORS configured. |
+| A07: Identification & Auth Failures | Email code verification with expiry + JWT tokens with TTL. |
+| A08: Software/Data Integrity Failures | No dynamic eval/imports. Only static dependencies. |
+| A09: Logging & Monitoring | `morgan` logs all HTTP access. PM2 captures stdout/stderr for audit. |
+
+These controls ensure the service remains lightweight, verifiable, and secure while hosted on constrained hardware such as a Raspberry Pi.
 
 ---
 

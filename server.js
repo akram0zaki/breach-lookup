@@ -1,5 +1,5 @@
-import 'dotenv/config';
 import express from 'express';
+import dotenv from 'dotenv';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -7,9 +7,12 @@ import zlib from 'zlib';
 import readline from 'readline';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
+import helmet from 'helmet';
+import cors from 'cors';
+import morgan from 'morgan';
+import rateLimit from 'express-rate-limit';
 
-const app = express();
-app.use(express.json());
+dotenv.config();
 
 const {
   EMAIL_HASH_KEY,
@@ -26,6 +29,17 @@ const {
 } = process.env;
 const CODE_LIFETIME = parseInt(CODE_TTL, 10) * 1000;
 
+const app = express();
+app.use(helmet());
+app.disable('x-powered-by');
+app.use(morgan('combined'));
+app.use(cors({
+  origin: ['https://breach-lookup.azprojects.net'],
+  methods: ['GET', 'POST'],
+  optionsSuccessStatus: 200
+}));
+app.use(express.json());
+
 const codeStore = new Map();
 
 let transporter;
@@ -36,7 +50,12 @@ let transporter;
     secure: SMTP_SECURE === 'true',
     auth: { user: SMTP_USER, pass: SMTP_PASS }
   });
-  console.log('SMTP transporter configured:', { host: SMTP_HOST, port: SMTP_PORT, secure: SMTP_SECURE, user: SMTP_USER });
+  console.log('SMTP transporter configured:', {
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    user: SMTP_USER
+  });
 })();
 
 function hashEmail(email) {
@@ -67,7 +86,14 @@ async function verifyTurnstile(token, remoteip) {
   return data.success;
 }
 
-app.post('/api/request-code', async (req, res) => {
+const emailLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  keyGenerator: req => req.body.email || req.ip,
+  handler: (_, res) => res.status(429).json({ error: 'Too many requests. Try again later.' })
+});
+
+app.post('/api/request-code', emailLimiter, async (req, res) => {
   const { email, turnstileToken } = req.body;
   if (!email || !turnstileToken) {
     return res.status(400).json({ error: 'email and captcha token required' });
