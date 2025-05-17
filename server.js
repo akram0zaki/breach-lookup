@@ -14,6 +14,18 @@ import rateLimit from 'express-rate-limit';
 
 dotenv.config();
 
+function normalizeEmail(email) {
+  let e = email.trim().toLowerCase();
+  e = e.replace(/^[^a-z0-9]+/, '');
+  const atIndex = e.indexOf('@');
+  if (atIndex > 0) {
+    let local = e.slice(0, atIndex).split('+')[0];
+    const domain = e.slice(atIndex + 1);
+    e = `${local}@${domain}`;
+  }
+  return e;
+}
+
 const {
   EMAIL_HASH_KEY,
   JWT_SECRET,
@@ -61,7 +73,7 @@ let transporter;
 function hashEmail(email) {
   return crypto
     .createHmac('sha256', Buffer.from(EMAIL_HASH_KEY, 'hex'))
-    .update(email.trim().toLowerCase())
+    .update(normalizeEmail(email))
     .digest('hex');
 }
 
@@ -149,21 +161,59 @@ function authenticate(req, res, next) {
 
 app.get('/api/breaches', authenticate, async (req, res) => {
   const email_hash = hashEmail(req.email);
-  const dir = email_hash.slice(0, 2);
-  const prefix = email_hash.slice(0, 4);
-  const filename = prefix + '.jsonl.gz';
-  const filePath = path.join(SHARD_DIR, dir, filename);
-  if (!fs.existsSync(filePath)) return res.json([]);
+  const dir    = email_hash.slice(0, 2);
+  const pref   = email_hash.slice(0, 4);
+  
+  const gzPath   = path.join(SHARD_DIR, dir, `${pref}.jsonl.gz`);
+  const jsonlPath= path.join(SHARD_DIR, dir, `${pref}.jsonl`);
+  let   filePath, isGzip;
+  
+  if (fs.existsSync(gzPath)) {
+    filePath = gzPath;  isGzip = true;
+  } else if (fs.existsSync(jsonlPath)) {
+    filePath = jsonlPath; isGzip = false;
+  } else {
+    console.warn(`[/api/breaches] no shard for ${email_hash}, looked at:\n  ${gzPath}\n  ${jsonlPath}`);
+    return res.json([]);  // no records
+  }
+
+  console.log(`[/api/breaches] streaming shard: ${filePath}`);
+  const rawStream = fs.createReadStream(filePath);
+  rawStream.on('error', err => {
+    console.error(`[/api/breaches] error opening shard ${filePath}:`, err);
+    return res.status(500).json({ error: 'Failed to read shard file' });
+  });
+
+  const input = isGzip
+    ? rawStream.pipe(zlib.createGunzip().on('error', e => {
+        console.error(`[/api/breaches] gunzip error:`, e);
+        rawStream.destroy();
+      }))
+    : rawStream;
+
+  const rl = readline.createInterface({ input, crlfDelay: Infinity });
   const results = [];
-  const stream = fs.createReadStream(filePath).pipe(zlib.createGunzip());
-  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-  for await (const line of rl) {
+
+  rl.on('line', line => {
     try {
       const rec = JSON.parse(line);
-      if (rec.email_hash === email_hash) results.push(rec);
-    } catch {}
-  }
-  res.json(results);
+      if (rec.email_hash === email_hash) {
+        // trim everything before "breaches" (inclusive)
+        const idx = rec.source.indexOf('breaches');
+        if (idx !== -1) {
+          rec.source = rec.source.slice(idx);
+        }
+        results.push(rec);
+	  }
+    } catch (e) {
+      console.error(`[/api/breaches] JSON parse error:`, e, `\n  line>`, line);
+    }
+  });
+
+  rl.on('close', () => {
+    console.log(`[/api/breaches] found ${results.length} records for query.`);
+    res.json(results);
+  });
 });
 
 const PORT = parseInt(process.env.PORT || '3000', 10);

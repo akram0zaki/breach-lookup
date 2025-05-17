@@ -49,15 +49,15 @@
     <div id="step1">
       <form id="request-form">
         <label for="email">Email Address</label>
-        <input type="email" id="email" required placeholder="you@example.com">
+        <input type="email" id="email" required placeholder="you@example.com" autocomplete="email">
         <div class="cf-turnstile" data-sitekey="0x4AAAAAABbrd4R2v-G6dzov" data-callback="onTurnstileSuccess" data-error-callback="onTurnstileError"></div>
         <button type="submit">Send Verification Code</button>
       </form>
     </div>
     <div id="step2" class="hidden">
-      <form id="verify-form">
+      <form id="verify-form" autocomplete="off">
         <label for="code">Verification Code</label>
-        <input type="text" id="code" maxlength="6" required placeholder="123456">
+        <input type="text" id="code" maxlength="6" required placeholder="123456"  autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="numeric">
         <button type="submit">Verify Code</button>
       </form>
     </div>
