@@ -1,29 +1,18 @@
 import express from 'express';
 import dotenv from 'dotenv';
+import os from 'os';
+import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
 import helmet from 'helmet';
 import cors from 'cors';
 import morgan from 'morgan';
-import rateLimit from 'express-rate-limit';
 
+import config from './config.js';
 import ShardSource from './ShardSource.js';
 import PlaintextDirSource from './PlaintextDirSource.js';
 
 dotenv.config();
-
-// Normalize email similarly to hashing logic
-function normalizeEmail(email) {
-  let e = email.trim().toLowerCase();
-  e = e.replace(/^[^a-z0-9]+/, '');
-  const at = e.indexOf('@');
-  if (at > 0) {
-    let local = e.slice(0, at).split('+')[0];
-    const domain = e.slice(at + 1);
-    e = `${local}@${domain}`;
-  }
-  return e;
-}
 
 const {
   EMAIL_HASH_KEY,
@@ -39,82 +28,160 @@ const {
   TURNSTILE_SECRET
 } = process.env;
 
+// Simple concurrency limiter
+class ConcurrencyLimiter {
+  constructor(max) {
+    this.max = max;
+    this.current = 0;
+    this.queue = [];
+  }
+  async acquire() {
+    if (this.current < this.max) {
+      this.current++;
+      return;
+    }
+    await new Promise(resolve => this.queue.push(resolve));
+    this.current++;
+  }
+  release() {
+    this.current--;
+    if (this.queue.length > 0) {
+      const next = this.queue.shift();
+      next();
+    }
+  }
+  async run(fn) {
+    await this.acquire();
+    try {
+      return await fn();
+    } finally {
+      this.release();
+    }
+  }
+}
+
+// Normalize email
+function normalizeEmail(email) {
+  let e = email.trim().toLowerCase().replace(/^[^a-z0-9]+/, '');
+  const at = e.indexOf('@');
+  if (at > 0) {
+    const local = e.slice(0, at).split('+')[0];
+    e = `${local}@${e.slice(at + 1)}`;
+  }
+  return e;
+}
+
+// CPU and memory guards
+function cpuOkay() {
+  const [load1] = os.loadavg();
+  const cores = os.cpus().length;
+  return load1 < cores * config.throttle.cpu.loadFactor;
+}
+function memOkay() {
+  const { rss, heapTotal } = process.memoryUsage();
+  return Math.max(rss, heapTotal) < os.totalmem() * config.throttle.memory.usageFactor;
+}
+
 const app = express();
 app.use(helmet());
 app.disable('x-powered-by');
-app.use(morgan('combined'));
 app.use(cors({
   origin: ['https://breach-lookup.azprojects.net'],
-  methods: ['GET','POST'],
+  methods: ['GET', 'POST'],
   optionsSuccessStatus: 200
 }));
+app.use(morgan('combined'));
 app.use(express.json());
 
-// Setup email code store
-const codeStore = new Map();
-
-// Prepare data sources
+// Data sources
 const sources = [];
-
 if (EMAIL_HASH_KEY && SHARD_DIRS) {
   const dirs = SHARD_DIRS.split(',').map(s => s.trim()).filter(Boolean);
-  if (dirs.length) {
-    sources.push(new ShardSource(dirs, EMAIL_HASH_KEY));
-  }
+  sources.push(new ShardSource(dirs, EMAIL_HASH_KEY));
 }
 if (PLAINTEXT_DIR) {
   sources.push(new PlaintextDirSource(PLAINTEXT_DIR));
 }
 
-// Turnstile verification helper
+// In-memory code store
+const codeStore = new Map();
+
+// Turnstile verification helper (with timeout)
 async function verifyTurnstile(token, remoteip) {
-  const resp = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-    method:'POST',
-    headers: {'Content-Type':'application/x-www-form-urlencoded'},
-    body: new URLSearchParams({
-      secret: TURNSTILE_SECRET,
-      response: token,
-      remoteip
-    })
-  });
-  const data = await resp.json();
-  return data.success;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.captcha?.timeoutMs || 5000);
+
+  try {
+    const resp = await fetch(
+      'https://challenges.cloudflare.com/turnstile/v0/siteverify',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          secret: TURNSTILE_SECRET,
+          response: token,
+          remoteip
+        }),
+        signal: controller.signal
+      }
+    );
+    clearTimeout(timer);
+    const data = await resp.json();
+    return data.success === true;
+  } catch (err) {
+    clearTimeout(timer);
+    console.error('Turnstile verify error:', err);
+    return false;
+  }
 }
 
-// Rate limiter for email requests
-const emailLimiter = rateLimit({
-  windowMs: 60*1000,
-  max: 5,
-  keyGenerator: req => req.body.email || req.ip,
-  handler: (_, res) => res.status(429).json({ error: 'Too many requests. Try again later.' })
+// Rate limiters
+const lookupLimiter = rateLimit({
+  windowMs: config.throttle.lookupRateLimit.windowMs,
+  max: config.throttle.lookupRateLimit.max,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) =>
+    res.status(429).json({ error: 'Too many lookup requests, please try again later.' })
 });
+const codeLimiter = rateLimit({
+  windowMs: config.throttle.codeRateLimit.windowMs,
+  max: config.throttle.codeRateLimit.max,
+  keyGenerator: req => req.body.email || req.ip,
+  handler: (_req, res) =>
+    res.status(429).json({ error: 'Too many code requests, please try again later.' })
+});
+
+// Concurrency limiter instance
+const concurrencyLimiter = new ConcurrencyLimiter(config.throttle.concurrencyLimit);
 
 // Setup SMTP transporter
 let transporter;
 (async () => {
   transporter = nodemailer.createTransport({
     host: SMTP_HOST,
-    port: parseInt(SMTP_PORT,10),
+    port: parseInt(SMTP_PORT, 10),
     secure: SMTP_SECURE === 'true',
     auth: { user: SMTP_USER, pass: SMTP_PASS }
   });
-  console.log('SMTP ready');
+  console.log('SMTP transporter configured');
 })();
 
 // Request verification code
-app.post('/api/request-code', emailLimiter, async (req, res) => {
+app.post('/api/request-code', codeLimiter, async (req, res) => {
   const { email, turnstileToken } = req.body;
-  if (!email || !turnstileToken) return res.status(400).json({ error: 'email & captcha required' });
-  try {
-    const ok = await verifyTurnstile(turnstileToken, req.ip);
-    if (!ok) return res.status(403).json({ error: 'captcha failed' });
-  } catch (e) {
-    return res.status(500).json({ error: 'captcha error' });
+  if (!email || !turnstileToken) {
+    return res.status(400).json({ error: 'email and captcha token required' });
   }
-  const code = Math.floor(100000 + Math.random()*900000).toString();
+  const ok = await verifyTurnstile(turnstileToken, req.ip);
+  if (!ok) {
+    return res.status(403).json({ error: 'CAPTCHA verification failed or timed out' });
+  }
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
   if (codeStore.has(email)) clearTimeout(codeStore.get(email).timeout);
-  const timeout = setTimeout(() => codeStore.delete(email), 10*60*1000);
+  const timeout = setTimeout(() => codeStore.delete(email), config.throttle.codeRateLimit.windowMs * 10);
   codeStore.set(email, { code, timeout });
+
   try {
     await transporter.sendMail({
       from: SMTP_FROM,
@@ -124,28 +191,30 @@ app.post('/api/request-code', emailLimiter, async (req, res) => {
     });
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: 'email send failed' });
+    console.error('Error sending email:', err);
+    res.status(500).json({ error: 'Failed to send verification email' });
   }
 });
 
-// Verify code and issue JWT
+// Verify code & issue JWT
 app.post('/api/verify-code', (req, res) => {
   const { email, code } = req.body;
   const entry = codeStore.get(email);
-  if (!entry || entry.code !== code) return res.status(401).json({ error: 'invalid code' });
+  if (!entry || entry.code !== code) {
+    return res.status(401).json({ error: 'Invalid verification code' });
+  }
   clearTimeout(entry.timeout);
   codeStore.delete(email);
   const token = jwt.sign({ sub: email }, JWT_SECRET, { expiresIn: '1h' });
   res.json({ token });
 });
 
-// Authentication middleware
+// Auth middleware
 function authenticate(req, res, next) {
   const h = req.headers.authorization;
   if (!h || !h.startsWith('Bearer ')) return res.status(401).end();
   try {
-    const payload = jwt.verify(h.slice(7), JWT_SECRET);
-    req.email = payload.sub;
+    req.email = jwt.verify(h.slice(7), JWT_SECRET).sub;
     next();
   } catch {
     res.status(401).end();
@@ -153,20 +222,30 @@ function authenticate(req, res, next) {
 }
 
 // Breach lookup endpoint
-app.get('/api/breaches', authenticate, async (req, res) => {
-  const emailRaw = req.email;
-  const emailNorm = normalizeEmail(emailRaw);
-  const results = [];
-  for (const src of sources) {
+app.get(
+  '/api/breaches',
+  authenticate,
+  (req, res, next) => {
+    if (!cpuOkay()) return res.status(503).json({ error: 'Server too busy, try again later.' });
+    if (!memOkay()) return res.status(503).json({ error: 'Server low on memory, try again later.' });
+    next();
+  },
+  lookupLimiter,
+  async (req, res) => {
     try {
-      const recs = await src.search(emailRaw);
-      results.push(...recs);
+      const emailRaw = req.email;
+      // Run each source.search through our concurrency limiter
+      const promises = sources.map(src =>
+        concurrencyLimiter.run(() => src.search(emailRaw))
+      );
+      const allResults = await Promise.all(promises);
+      res.json(allResults.flat());
     } catch (err) {
-      console.error('Source error', err);
+      console.error('Lookup error:', err);
+      res.status(500).json({ error: 'Lookup failed' });
     }
   }
-  res.json(results);
-});
+);
 
-const PORT = parseInt(process.env.PORT||'3000',10);
-app.listen(PORT, () => console.log(`Server running on ${PORT}`));
+const PORT = parseInt(process.env.PORT || '3000', 10);
+app.listen(PORT, () => console.log(`Lookup service running on port ${PORT}`));

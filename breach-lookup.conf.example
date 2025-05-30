@@ -1,0 +1,31 @@
+# /etc/nginx/sites-available/breach-lookup.conf
+
+# 1) Define the shared rate-limit zone in the http context.
+#    Allows 10 requests per minute per IP, stored in a 10 MB in-memory zone.
+limit_req_zone $binary_remote_addr zone=lookup_zone:10m rate=10r/m;
+
+server {
+  listen 80;
+  server_name breach-lookup.azprojects.net;
+
+  # static UI:
+  root /var/www/breach-lookup;
+  index index.html;
+  location / {
+    try_files $uri $uri/ =404;
+  }
+
+  # API proxy with rate-limiting
+  location /api/ {
+    # 2) Apply the rate limit
+    #    burst=5  → allow short bursts of up to 5 extra requests
+    #    nodelay  → reject immediately once burst is exhausted
+    limit_req zone=lookup_zone burst=5 nodelay;
+
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+  }
+}

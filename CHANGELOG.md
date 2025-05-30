@@ -44,6 +44,15 @@ All notable changes implemented on this date.
     * JSONL shard structure and lookup process.
     * Two‐level plaintext directory (with optional third level) and grep‐based lookup.
 
+* **Throttling**  
+  - Introduced multi-layer throttling with externalized parameters in `config.js` for:
+    - Per-IP lookup rate limits (`lookupRateLimit`)  
+    - Per-email verification code rate limits (`codeRateLimit`)  
+    - Concurrency limits on shard searches (`concurrencyLimit`)  
+    - CPU load-average circuit breaker (`cpu.loadFactor`)  
+    - Memory-usage guard (`memory.usageFactor`)  
+  - Documented proxy-level rate limiting via `limit_req_zone` and `limit_req` in the NGINX config.
+
 ### 🐛 Fixed
 
 * **search.js**:

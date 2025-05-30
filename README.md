@@ -132,6 +132,23 @@ This service uses a **pluggable sources** architecture to query multiple breach 
 
 ---
 
+## Throttling
+
+Heavy or abusive traffic can overwhelm a low-powered host (like a Raspberry Pi). I’ve added multi-layer throttles to gracefully shed load and maintain responsiveness:
+
+| Layer                            | What it does                                                       | Config key                    |
+|----------------------------------|--------------------------------------------------------------------|-------------------------------|
+| **Per-IP rate limit**            | Caps `/api/breaches` calls per minute per client IP               | `throttle.lookupRateLimit`    |
+| **Per-email rate limit**         | Caps `/api/request-code` (email) calls per minute per IP/email    | `throttle.codeRateLimit`      |
+| **Concurrency limiter**          | Only N simultaneous heavy `search()` jobs at once                  | `throttle.concurrencyLimit`   |
+| **CPU load circuit breaker**     | Rejects when 1-min loadavg ≥ cores × loadFactor                    | `throttle.cpu.loadFactor`     |
+| **Memory‐usage guard**           | Rejects when heap/RSS ≥ total RAM × usageFactor                    | `throttle.memory.usageFactor` |
+| **Edge/NGINX rate limit**        | Global rate limiting at the proxy layer via `limit_req_zone`       | n/a (in NGINX conf)           |
+
+Each parameter can be tweaked in [config.js](config.js) (and proxy settings in NGINX), so you can dial limits up or down as your Pi’s capacity or usage changes.
+
+---
+
 ## Prerequisites
 
 * **Hardware**: This project was hosted on a Raspberry Pi 5, which offers very low resource consumption, making it a good choice for 24x7 hobby-project hosting
