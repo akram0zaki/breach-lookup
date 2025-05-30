@@ -30,7 +30,7 @@ const {
   EMAIL_HASH_KEY,
   JWT_SECRET,
   CODE_TTL = '600',
-  SHARD_DIR,
+  SHARD_DIRS,
   SMTP_HOST,
   SMTP_PORT,
   SMTP_USER,
@@ -53,7 +53,6 @@ app.use(cors({
 app.use(express.json());
 
 const codeStore = new Map();
-
 let transporter;
 (async () => {
   transporter = nodemailer.createTransport({
@@ -62,12 +61,7 @@ let transporter;
     secure: SMTP_SECURE === 'true',
     auth: { user: SMTP_USER, pass: SMTP_PASS }
   });
-  console.log('SMTP transporter configured:', {
-    host: SMTP_HOST,
-    port: SMTP_PORT,
-    secure: SMTP_SECURE,
-    user: SMTP_USER
-  });
+  console.log('SMTP transporter configured:', { host: SMTP_HOST, port: SMTP_PORT, secure: SMTP_SECURE, user: SMTP_USER });
 })();
 
 function hashEmail(email) {
@@ -159,61 +153,54 @@ function authenticate(req, res, next) {
   }
 }
 
+// Multi-shard, all-matches breach lookup
 app.get('/api/breaches', authenticate, async (req, res) => {
-  const email_hash = hashEmail(req.email);
-  const dir    = email_hash.slice(0, 2);
-  const pref   = email_hash.slice(0, 4);
-  
-  const gzPath   = path.join(SHARD_DIR, dir, `${pref}.jsonl.gz`);
-  const jsonlPath= path.join(SHARD_DIR, dir, `${pref}.jsonl`);
-  let   filePath, isGzip;
-  
-  if (fs.existsSync(gzPath)) {
-    filePath = gzPath;  isGzip = true;
-  } else if (fs.existsSync(jsonlPath)) {
-    filePath = jsonlPath; isGzip = false;
-  } else {
-    console.warn(`[/api/breaches] no shard for ${email_hash}, looked at:\n  ${gzPath}\n  ${jsonlPath}`);
-    return res.json([]);  // no records
+  const emailHash = hashEmail(req.email);
+  const dir = emailHash.slice(0, 2);
+  const pref = emailHash.slice(0, 4);
+  const baseDirs = (SHARD_DIRS || '').split(',').map(s => s.trim()).filter(Boolean);
+
+  // Gather all shard file paths
+  const shards = [];
+  for (const base of baseDirs) {
+    const gzPath = path.join(base, dir, `${pref}.jsonl.gz`);
+    const jsonlPath = path.join(base, dir, `${pref}.jsonl`);
+    if (fs.existsSync(gzPath)) shards.push({ filePath: gzPath, isGzip: true });
+    if (fs.existsSync(jsonlPath)) shards.push({ filePath: jsonlPath, isGzip: false });
   }
 
-  console.log(`[/api/breaches] streaming shard: ${filePath}`);
-  const rawStream = fs.createReadStream(filePath);
-  rawStream.on('error', err => {
-    console.error(`[/api/breaches] error opening shard ${filePath}:`, err);
-    return res.status(500).json({ error: 'Failed to read shard file' });
-  });
+  if (shards.length === 0) {
+    console.warn(`[/api/breaches] no shard files found for ${emailHash}`);
+    return res.json([]);
+  }
 
-  const input = isGzip
-    ? rawStream.pipe(zlib.createGunzip().on('error', e => {
-        console.error(`[/api/breaches] gunzip error:`, e);
-        rawStream.destroy();
-      }))
-    : rawStream;
-
-  const rl = readline.createInterface({ input, crlfDelay: Infinity });
+  console.log(`[/api/breaches] reading ${shards.length} shard file(s)`);
   const results = [];
 
-  rl.on('line', line => {
-    try {
-      const rec = JSON.parse(line);
-      if (rec.email_hash === email_hash) {
-        // trim everything before "breaches" (inclusive)
-        const idx = rec.source.indexOf('breaches');
-        if (idx !== -1) {
-          rec.source = rec.source.slice(idx);
-        }
-        results.push(rec);
-	  }
-    } catch (e) {
-      console.error(`[/api/breaches] JSON parse error:`, e, `\n  line>`, line);
-    }
-  });
+  for (const { filePath, isGzip } of shards) {
+    const raw = fs.createReadStream(filePath);
+    const stream = isGzip
+      ? raw.pipe(zlib.createGunzip().on('error', e => { console.error('gzip error', e); raw.destroy(); }))
+      : raw;
 
-  rl.on('close', () => {
-    console.log(`[/api/breaches] found ${results.length} records for query.`);
-    res.json(results);
-  });
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    for await (const line of rl) {
+      try {
+        const rec = JSON.parse(line);
+        if (rec.email_hash === emailHash) {
+          // Optionally trim source path
+          const idx = rec.source.indexOf('breaches');
+          if (idx !== -1) rec.source = rec.source.slice(idx);
+          results.push(rec);
+        }
+      } catch (e) {
+        console.error('JSON parse error:', e);
+      }
+    }
+  }
+
+  console.log(`[/api/breaches] found ${results.length} record(s)`);
+  res.json(results);
 });
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
