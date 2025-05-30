@@ -1,6 +1,5 @@
 # Breach Lookup Service
 
-
 This project hosts a secure and privacy-respecting breach lookup service that allows users to check if their email addresses were found in known breach compilations. 
 As a proof of concept, this project is published on a Raspberry Pi, backed by JSONL shard storage and served through a lightweight Express web service with email verification.
 
@@ -91,9 +90,51 @@ flowchart TD
 
 ---
 
+
+## Data Sources and Formats
+
+This service uses a **pluggable sources** architecture to query multiple breach data formats. New sources can be added by implementing a `Source` interface.
+
+### ShardSource (JSONL Shards)
+- **Configuration**: Set `SHARD_DIRS` in `.env` to a comma-separated list of directories.
+- **Directory Structure**: Each base directory is organized into two levels of subfolders named `00`–`ff` (hex):
+  ```
+  /path/to/shards/
+    00/000a.jsonl[.gz]
+    00/000b.jsonl[.gz]
+    ...
+    ff/fffa.jsonl[.gz]
+  ```
+- **Lookup Process**:
+  1. Email is normalized and hashed (HMAC-SHA256).
+  2. First two hex chars map to subfolder, next two to filename prefix.
+  3. Streams `.jsonl` or `.jsonl.gz` files, filtering entries matching the email hash.
+
+### PlaintextDirSource (Two-Level Plaintext Files)
+- **Configuration**: Set `PLAINTEXT_DIR` in `.env` to the root of the plaintext data.
+- **Directory Structure**:  
+  - **First level**: folder name is the first character of the email (alphanumeric or `symbols`).  
+  - **Second level**: folder or file name is the second character.
+  - **Third level (optional)**: if a folder exists (to split large buckets), files are named by the third character.
+  ```
+  /path/to/data/
+    a/
+      k   (file containing all emails starting 'ak')
+      symbols/
+        ... (if 'ak' bucket is large, further split by 3rd char)
+    symbols
+    ...
+  ```
+- **Lookup Process**:
+  1. Maps first, second (and third if needed) characters to reach the leaf file.
+  2. Uses a **case-insensitive grep** to scan for `^email[:; ]` and parses key–value pairs.
+  3. Returns plaintext passwords with `"source": "Other"` for clarity.
+
+---
+
 ## Prerequisites
 
-* **Hardware**: This project was hosted on a Raspberry Pi 5, which offers very low resource consumption, making it a good choice for 24x7 hosting
+* **Hardware**: This project was hosted on a Raspberry Pi 5, which offers very low resource consumption, making it a good choice for 24x7 hobby-project hosting
 * **Node.js** ≥ 18
 * **pm2** for process management
 * **cloudflared** for Cloudflare Tunnel
@@ -123,7 +164,7 @@ EMAIL_HASH_KEY=<hex 32-byte key>
 JWT_SECRET=<jwt-secret>
 
 # Shard path
-SHARD_DIR=/mnt/data/shards
+SHARD_DIRS=/mnt/data/shards,...
 
 # Cloudflare Turnstile
 TURNSTILE_SECRET=<turnstile-secret>
@@ -183,6 +224,7 @@ systemctl enable --now cloudflared
 
 ## CLI Lookup
 
+Used during the development and testing of this project to ensure it is functioning as designed.
 ```bash
 # Ensure .env is present or export vars
 npm install dotenv
