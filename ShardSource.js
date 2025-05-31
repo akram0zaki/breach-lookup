@@ -53,10 +53,12 @@ export default class ShardSource extends Source {
         try {
           const rec = JSON.parse(line);
           if (rec.email_hash === emailHash) {
+            const idx = rec.source.indexOf('breaches');
+            if (idx !== -1) rec.source = rec.source.slice(idx);
             results.push({
               email:     emailNorm,
               password:  rec.password,
-              source:    filePath,
+              source:    rec.source,
               is_hash:   rec.is_hash,
               hash_type: rec.hash_type,
             });

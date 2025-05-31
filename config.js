@@ -12,6 +12,10 @@ export default {
       windowMs: 60 * 1000,
       max: 5
     },
+    verifyRateLimit: { 
+      windowMs: 60 * 1000, 
+      max: 5 
+    },
     // Maximum concurrent shard/source searches
     concurrencyLimit: 2,
     // CPU load factor threshold (loadavg 1min < cores * factor)

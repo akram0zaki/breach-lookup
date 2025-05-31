@@ -48,7 +48,11 @@
   <div id="toast"></div>
   <header>
     <h1>Breach Lookup Service</h1>
-    <p>Enter your email below and verify ownership via a 6-digit code. Once verified, you'll be able to view any breach records associated with your email.</p>
+    <p>
+      Enter your email below and verify ownership via a 6-digit code. Once
+      verified, you’ll be able to view any breach records associated with your
+      email.
+    </p>
   </header>
   <main>
     <div id="error-banner" class="hidden" style="background:#ffe5e5; color:#900; padding:1rem; border-radius:4px; margin-bottom:1rem;"></div>
@@ -56,7 +60,12 @@
       <form id="request-form" onsubmit="return false;">
         <label for="email">Email Address</label>
         <input type="email" id="email" required placeholder="you@example.com" autocomplete="email">
-        <div class="cf-turnstile" data-sitekey="0x4AAAAAABbrd4R2v-G6dzov" data-callback="onTurnstileSuccess" data-error-callback="onTurnstileError"></div>
+        <div 
+			class="cf-turnstile" 
+			data-sitekey="0x4AAAAAABbrd4R2v-G6dzov" 
+			data-callback="onTurnstileSuccess" 
+			data-error-callback="onTurnstileError"
+		></div>
         <button type="button" id="send-code-btn">Send Verification Code</button>
       </form>
     </div>
@@ -83,88 +92,151 @@
       window.onTurnstileSuccess = onTurnstileSuccess;
       window.onTurnstileError = onTurnstileError;
 
-      const apiBase = '';
       let jwtToken = '';
+      const apiBase = ''; // Leave empty if same origin, or set to full API URL
+
+      // Step containers
       const step1 = document.getElementById('step1');
       const step2 = document.getElementById('step2');
       const step3 = document.getElementById('step3');
-      const resultsDiv = document.getElementById('results');
-      const resetBtn = document.getElementById('reset-btn');
-      const toast = document.getElementById('toast');
 
-      function showToast(msg, duration=3000) {
+      // UI elements
+      const toast = document.getElementById('toast');
+	  const errorBanner = document.getElementById('error-banner');
+      const resultsDiv = document.getElementById('results');
+	  const queryTime = document.getElementById('query-time');
+      const resetBtn = document.getElementById('reset-btn');
+
+      // ===== UI helpers =====
+      function showToast(msg, duration=4000) {
         toast.textContent = msg;
         toast.style.display = 'block';
         setTimeout(() => { toast.style.display = 'none'; }, duration);
       }
       function showError(msg) {
-        const banner = document.getElementById('error-banner');
-        banner.textContent = msg;
-        banner.classList.remove('hidden');
+        errorBanner.textContent = msg;
+        errorBanner.classList.remove('hidden');
+		errorBanner.style.display = 'block';
       }
       function hideError() {
-        const banner = document.getElementById('error-banner');
-        banner.textContent = '';
-        banner.classList.add('hidden');
+        errorBanner.textContent = '';
+        errorBanner.classList.add('hidden');
+		errorBanner.style.display = 'none';
       }
 
-
+      // ===== Step 1: Send code =====
+	  
       document.getElementById('send-code-btn').addEventListener('click', async () => {
         const email = document.getElementById('email').value.trim();
+        if (!email) {
+          showError('Please enter a valid email address.');
+          return;
+        }
         if (!turnstileToken) { showToast('Please complete the CAPTCHA'); return; }
         try {
           const res = await fetch(apiBase + '/api/request-code', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body:JSON.stringify({ email, turnstileToken })
           });
-          if (!res.ok) throw res;
-          showToast('Verification code sent to ' + email);
-          step1.classList.add('hidden');
-          step2.classList.remove('hidden');
+		  
+          if (res.ok) {
+            hideError();
+            showToast('Verification code sent to ' + email);
+            step1.classList.add('hidden');
+            step2.classList.remove('hidden');
+          } else if (res.status === 429) {
+            showError('Too many requests, please wait a moment.');
+          } else if (res.status === 503) {
+            showError('Service unavailable, please try again later.');
+          } else {
+            let errMsg = `Error ${res.status}`;
+            try {
+              const payload = await res.json();
+              if (payload.error) errMsg = payload.error;
+            } catch (_) {}
+            showError(errMsg);
+          }
         } catch (err) {
           const errJson = await err.json().catch(() => null);
-          showToast('Failed to send code: ' + (errJson?.error || err.status));
+          showError('Failed to send code: ' + (errJson?.error || err.status));
         }
       });
 
+      // ===== Step 2: Verify code =====
+	
       document.getElementById('verify-btn').addEventListener('click', async () => {
+	    hideError();
+		
         const email = document.getElementById('email').value.trim();
         const code  = document.getElementById('code').value.trim();
-        const res = await fetch(apiBase + '/api/verify-code', {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({ email, code })
-        });
-        if (res.ok) {
-          const json = await res.json(); jwtToken = json.token;
-          showToast('Code verified');
-          step2.classList.add('hidden');
-          step3.classList.remove('hidden');
-        } else {
-          showToast('Invalid code');
+        if (!code) {
+          showError('Please enter the 6-digit code.');
+          return;
+        }
+		
+        try {
+          const res = await fetch(apiBase + '/api/verify-code', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({ email, code })
+          });
+
+          if (res.status === 200) {
+			  // Success: retrieve token, advance to step3
+			  const json = await res.json();
+			  jwtToken = json.token;
+			  hideError();
+			  showToast('Code verified');
+			  step2.classList.add('hidden');
+			  step3.classList.remove('hidden');
+	      }
+		  else if (res.status === 401) {
+			showError('Invalid code');
+		  }
+		  else if (res.status === 429) {
+			showError(
+			  'Too many verification attempts, please try again later.'
+			);
+		  }
+		  else if (res.status === 503) {
+			showError('Service unavailable, please try again later.');
+		  }
+		  else {
+			let errText = `Error ${res.status}`;
+			try {
+			  const payloadErr = await res.json();
+			  if (payloadErr.error) errText = payloadErr.error;
+			} catch (_) {}
+			showError(errText);
+		  }
+        } catch (_) {
+          showError('Network error, please try again.');
         }
       });
 
-      document.getElementById('lookup-btn').addEventListener('click', async () => {
-        const lookupBtn = document.getElementById('lookup-btn');
-        lookupBtn.disabled = true;
-        document.getElementById('loading-banner').classList.remove('hidden');
-        const startTime = performance.now();
-        const res = await fetch(apiBase + '/api/breaches', { headers:{ 'Authorization':'Bearer '+jwtToken }});
-        const endTime = performance.now();
-        lookupBtn.disabled = false;
-        document.getElementById('loading-banner').classList.add('hidden');
-        document.getElementById('query-time').textContent = `Query took ${(endTime - startTime).toFixed(2)} ms`;
+      // ===== Step 3: Reset =====
+	  document.getElementById('lookup-btn').addEventListener('click', async () => {
+		const lookupBtn = document.getElementById('lookup-btn');
+		lookupBtn.disabled = true;
+		document.getElementById('loading-banner').classList.remove('hidden');
+		const startTime = performance.now();
+		const res = await fetch(apiBase + '/api/breaches', { headers:{ 'Authorization':'Bearer '+jwtToken }});
+		const endTime = performance.now();
+		lookupBtn.disabled = false;
+		document.getElementById('loading-banner').classList.add('hidden');
+		document.getElementById('query-time').textContent = `Query took ${(endTime - startTime).toFixed(2)} ms`;
 
-        if (res.ok) {
-          const records = await res.json();
-          resultsDiv.innerHTML = records.length
-            ? records.map(r => `<div class="record"><strong>Source:</strong> ${r.source}<br><strong>Email:</strong> ${r.email}<br><strong>Password:</strong> ${r.password}<br><strong>Hash:</strong> ${r.is_hash}</div>`).join('')
-            : '<p>No breach records found.</p>';
-          resultsDiv.classList.remove('hidden');
-          resetBtn.classList.remove('hidden');
-        } else {
-          showError('Lookup failed');
-        }
+		if (res.ok) {
+		  const records = await res.json();
+		  resultsDiv.innerHTML = records.length
+			? records.map(r => `<div class="record"><strong>Source:</strong> ${r.source}<br><strong>Email:</strong> ${r.email}<br><strong>Password:</strong> ${r.password}<br><strong>Hash:</strong> ${r.is_hash}</div>`).join('')
+			: '<p>No breach records found.</p>';
+		  resultsDiv.classList.remove('hidden');
+		  resetBtn.classList.remove('hidden');
+		} else {
+		  showError('Lookup failed');
+		}
+
+
       });
 
       resetBtn.addEventListener('click', () => {

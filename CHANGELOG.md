@@ -13,7 +13,19 @@ All notable changes implemented on this date.
 * **index.html**:
 
   * Added an error banner div to display error codes returned from the server.
+  * Improved the error handling for non-success server response codes.
 
+* **server.js**:
+
+  * Added rate limiter to the /api/verify-code endpoint to prevent bruteforce.
+
+### 🐛 Fixed
+
+* **ShardSource.js**:
+
+  * Populated the source as per the parsed json shard, instead of the shard location.
+
+---
 
 ## 2025-05-30
 

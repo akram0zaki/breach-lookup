@@ -123,6 +123,17 @@ const codeLimiter = rateLimit({
   handler: (_req, res) =>
     res.status(429).json({ error: 'Too many code requests, please try again later.' })
 });
+// Rate limiter for verifying codes to prevent brute-force
+const verifyLimiter = rateLimit({
+  windowMs: config.throttle.verifyRateLimit?.windowMs || config.throttle.codeRateLimit.windowMs,
+  max: config.throttle.verifyRateLimit?.max || config.throttle.codeRateLimit.max,
+  keyGenerator: req => req.body.email || req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) =>
+    res.status(429).json({ error: 'Too many verification attempts, please try again later.' })
+});
+
 
 // Simple concurrency limiter
 class ConcurrencyLimiter {
@@ -220,7 +231,7 @@ app.post('/api/request-code', codeLimiter, async (req, res) => {
 });
 
 // Verify code & issue JWT
-app.post('/api/verify-code', (req, res) => {
+app.post('/api/verify-code', verifyLimiter, (req, res) => {
   const { email, code } = req.body;
   const entry = codeStore.get(email);
   if (!entry || entry.code !== code) {
