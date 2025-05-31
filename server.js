@@ -7,6 +7,10 @@ import nodemailer from 'nodemailer';
 import helmet from 'helmet';
 import cors from 'cors';
 import morgan from 'morgan';
+import fs from 'fs';
+import path, { dirname } from 'path';
+import FileStreamRotator from 'file-stream-rotator';
+import { fileURLToPath } from 'url';
 
 import config from './config.js';
 import ShardSource from './ShardSource.js';
@@ -28,59 +32,26 @@ const {
   TURNSTILE_SECRET
 } = process.env;
 
-// Simple concurrency limiter
-class ConcurrencyLimiter {
-  constructor(max) {
-    this.max = max;
-    this.current = 0;
-    this.queue = [];
-  }
-  async acquire() {
-    if (this.current < this.max) {
-      this.current++;
-      return;
-    }
-    await new Promise(resolve => this.queue.push(resolve));
-    this.current++;
-  }
-  release() {
-    this.current--;
-    if (this.queue.length > 0) {
-      const next = this.queue.shift();
-      next();
-    }
-  }
-  async run(fn) {
-    await this.acquire();
-    try {
-      return await fn();
-    } finally {
-      this.release();
-    }
-  }
+// emulate __dirname in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Ensure logs directory exists
+const logDirectory = path.join(__dirname, 'logs');
+if (!fs.existsSync(logDirectory)) {
+  fs.mkdirSync(logDirectory);
 }
 
-// Normalize email
-function normalizeEmail(email) {
-  let e = email.trim().toLowerCase().replace(/^[^a-z0-9]+/, '');
-  const at = e.indexOf('@');
-  if (at > 0) {
-    const local = e.slice(0, at).split('+')[0];
-    e = `${local}@${e.slice(at + 1)}`;
-  }
-  return e;
-}
-
-// CPU and memory guards
-function cpuOkay() {
-  const [load1] = os.loadavg();
-  const cores = os.cpus().length;
-  return load1 < cores * config.throttle.cpu.loadFactor;
-}
-function memOkay() {
-  const { rss, heapTotal } = process.memoryUsage();
-  return Math.max(rss, heapTotal) < os.totalmem() * config.throttle.memory.usageFactor;
-}
+// Setup a daily-rotating access.log with symlink
+const accessLogStream = FileStreamRotator.getStream({
+  date_format: 'YYYYMMDD',
+  filename: path.join(logDirectory, 'access_%DATE%.log'),
+  frequency: 'daily',
+  verbose: false,
+  extension: '.log',
+  create_symlink: true,
+  symlink_name: 'access.log'
+});
 
 const app = express();
 app.use(helmet());
@@ -90,7 +61,8 @@ app.use(cors({
   methods: ['GET', 'POST'],
   optionsSuccessStatus: 200
 }));
-app.use(morgan('combined'));
+// Morgan middleware to write to access log
+app.use(morgan('combined', { stream: accessLogStream }));
 app.use(express.json());
 
 // Data sources
@@ -152,17 +124,68 @@ const codeLimiter = rateLimit({
     res.status(429).json({ error: 'Too many code requests, please try again later.' })
 });
 
-// Concurrency limiter instance
+// Simple concurrency limiter
+class ConcurrencyLimiter {
+  constructor(max) {
+    this.max = max;
+    this.current = 0;
+    this.queue = [];
+  }
+  async acquire() {
+    if (this.current < this.max) {
+      this.current++;
+      return;
+    }
+    await new Promise(resolve => this.queue.push(resolve));
+    this.current++;
+  }
+  release() {
+    this.current--;
+    if (this.queue.length > 0) {
+      const next = this.queue.shift();
+      next();
+    }
+  }
+  async run(fn) {
+    await this.acquire();
+    try {
+      return await fn();
+    } finally {
+      this.release();
+    }
+  }
+}
+
 const concurrencyLimiter = new ConcurrencyLimiter(config.throttle.concurrencyLimit);
 
-// Setup SMTP transporter
+// CPU and memory guards
+function cpuOkay() {
+  const [load1] = os.loadavg();
+  const cores = os.cpus().length;
+  return load1 < cores * config.throttle.cpu.loadFactor;
+}
+function memOkay() {
+  const { rss, heapTotal } = process.memoryUsage();
+  return Math.max(rss, heapTotal) < os.totalmem() * config.throttle.memory.usageFactor;
+}
+
+// Setup SMTP transporter with WARN+ logging
+const mailLogger = {
+  info: () => {},
+  debug: () => {},
+  warn: msg => accessLogStream.write(`WARN: ${msg}\n`),
+  error: msg => accessLogStream.write(`ERROR: ${msg}\n`)
+};
+
 let transporter;
 (async () => {
   transporter = nodemailer.createTransport({
     host: SMTP_HOST,
     port: parseInt(SMTP_PORT, 10),
     secure: SMTP_SECURE === 'true',
-    auth: { user: SMTP_USER, pass: SMTP_PASS }
+    auth: { user: SMTP_USER, pass: SMTP_PASS },
+    logger: mailLogger,
+    debug: false
   });
   console.log('SMTP transporter configured');
 })();
@@ -234,7 +257,6 @@ app.get(
   async (req, res) => {
     try {
       const emailRaw = req.email;
-      // Run each source.search through our concurrency limiter
       const promises = sources.map(src =>
         concurrencyLimiter.run(() => src.search(emailRaw))
       );

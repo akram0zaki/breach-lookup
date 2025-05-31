@@ -51,6 +51,7 @@
     <p>Enter your email below and verify ownership via a 6-digit code. Once verified, you'll be able to view any breach records associated with your email.</p>
   </header>
   <main>
+    <div id="error-banner" class="hidden" style="background:#ffe5e5; color:#900; padding:1rem; border-radius:4px; margin-bottom:1rem;"></div>
     <div id="step1">
       <form id="request-form" onsubmit="return false;">
         <label for="email">Email Address</label>
@@ -96,6 +97,17 @@
         toast.style.display = 'block';
         setTimeout(() => { toast.style.display = 'none'; }, duration);
       }
+      function showError(msg) {
+        const banner = document.getElementById('error-banner');
+        banner.textContent = msg;
+        banner.classList.remove('hidden');
+      }
+      function hideError() {
+        const banner = document.getElementById('error-banner');
+        banner.textContent = '';
+        banner.classList.add('hidden');
+      }
+
 
       document.getElementById('send-code-btn').addEventListener('click', async () => {
         const email = document.getElementById('email').value.trim();
@@ -151,11 +163,12 @@
           resultsDiv.classList.remove('hidden');
           resetBtn.classList.remove('hidden');
         } else {
-          showToast('Lookup failed');
+          showError('Lookup failed');
         }
       });
 
       resetBtn.addEventListener('click', () => {
+        hideError();
         jwtToken = ''; turnstileToken = '';
         document.getElementById('email').value = '';
         document.getElementById('code').value = '';

@@ -2,9 +2,20 @@
 
 All notable changes implemented on this date.
 
-## 2025-05-30
+## 2025-05-31
 
----
+### 🆕 Added
+
+* **Log Rotation**: Introduced access logs under logs/ directory with daily rotation using `file-stream-rotator`
+
+### 🔄 Changed
+
+* **index.html**:
+
+  * Added an error banner div to display error codes returned from the server.
+
+
+## 2025-05-30
 
 ### 🆕 Added
 

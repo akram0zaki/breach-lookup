@@ -289,6 +289,31 @@ node search.js user@example.com
 
 ---
 
+
+### Log Rotation
+
+In addition to PM2 logs, the Express application writes structured access logs to the `logs/` directory at the project root. The setup uses `file-stream-rotator` to rotate logs daily. Key points:
+
+- **Current Log Symlink**: `logs/access.log` is a symlink pointing to today’s log file.
+- **Rotated Files**: At the first access after midnight, the previous day’s log is renamed to `access_YYYYMMDD.log` (e.g., `access_20250529.log`).
+- **Location**: All rotated logs (e.g., `access_20250529.log`, `access_20250530.log`) reside in `logs/`. The `access.log` symlink always points to the current day’s file.
+- **Mailer Warnings/Errors**: Nodemailer’s `WARN` and `ERROR` messages also stream into these access logs via the same rotation mechanism.
+- **Example Path**: If you clone the repo and run under `/home/pi2/apps/breach-lookup`, you would see:
+  ```
+  /home/pi2/apps/breach-lookup/logs/
+    access.log         # symlink to today's file (e.g., access_20250531.log)
+    access_20250529.log
+    access_20250530.log
+    ...
+  ```
+- **PM2’s stdout/stderr** are still available via:
+  ```
+  ~/.pm2/logs/breach-lookup-out.log
+  ~/.pm2/logs/breach-lookup-error.log
+  ```
+
+---
+
 ## License
 
 MIT
