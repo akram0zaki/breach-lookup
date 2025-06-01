@@ -13,6 +13,7 @@
 import 'dotenv/config';
 import ShardSource from './ShardSource.js';
 import PlaintextDirSource from './PlaintextDirSource.js';
+import crypto from 'crypto';
 
 async function main() {
   const [,, email] = process.argv;
@@ -42,12 +43,20 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`Looking up email: ${email}`);
+  const emailNorm = email.trim().toLowerCase();
+  const emailHash = Buffer.from(
+    crypto.createHmac('sha256', Buffer.from(EMAIL_HASH_KEY, 'hex'))
+          .update(emailNorm)
+          .digest('hex'), 'hex'
+  );
+  console.log(`Normalized email: ${emailNorm}`);
+  console.log(`Email hash: ${emailHash.toString('hex')}`);
+  // console.log(`Looking up email: ${emailNorm}`);
   const results = [];
 
   for (const src of sources) {
     try {
-      const recs = await src.search(email);
+      const recs = await src.search(emailNorm);
       results.push(...recs);
     } catch (err) {
       console.error(`Error querying source ${src.constructor.name}:`, err);
