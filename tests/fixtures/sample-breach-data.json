@@ -1,0 +1,26 @@
+[
+  {
+    "email_norm": "john.doe@example.com",
+    "breach_name": "Example Corp Breach",
+    "breach_date": "2023-01-15",
+    "password_hash": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
+    "data_types": ["email", "password", "username"],
+    "affected_count": 1000000
+  },
+  {
+    "email_norm": "jane.smith@test.org",
+    "breach_name": "Test Site Leak",
+    "breach_date": "2023-03-22",
+    "password_hash": "ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f",
+    "data_types": ["email", "password", "personal_info"],
+    "affected_count": 500000
+  },
+  {
+    "email_norm": "admin@secure.net",
+    "breach_name": "Secure Network Incident",
+    "breach_date": "2023-05-10",
+    "password_hash": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3",
+    "data_types": ["email", "password", "financial"],
+    "affected_count": 250000
+  }
+]

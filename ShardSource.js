@@ -19,7 +19,8 @@ export default class ShardSource extends Source {
     this.key = Buffer.from(keyHex, 'hex');
   }
 
-  _hash(emailNorm) {
+  _hash(email) {
+    const emailNorm = email.trim().toLowerCase();
     return crypto
       .createHmac('sha256', this.key)
       .update(emailNorm)
@@ -28,7 +29,7 @@ export default class ShardSource extends Source {
 
   async search(email) {
     const emailNorm = email.trim().toLowerCase();
-    const emailHash = this._hash(emailNorm);
+    const emailHash = this._hash(email); // _hash now handles normalization internally
     const dir = emailHash.slice(0, 2);
     const pref = emailHash.slice(0, 4);
 

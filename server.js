@@ -15,6 +15,7 @@ import { fileURLToPath } from 'url';
 import config from './config.js';
 import ShardSource from './ShardSource.js';
 import PlaintextDirSource from './PlaintextDirSource.js';
+import PostgresSource from './PostgresSource.js';
 
 dotenv.config();
 
@@ -22,6 +23,7 @@ const {
   EMAIL_HASH_KEY,
   SHARD_DIRS,
   PLAINTEXT_DIR,
+  POSTGRES_CONNECTION_STRING,
   JWT_SECRET,
   SMTP_HOST,
   SMTP_PORT,
@@ -73,6 +75,11 @@ if (EMAIL_HASH_KEY && SHARD_DIRS) {
 }
 if (PLAINTEXT_DIR) {
   sources.push(new PlaintextDirSource(PLAINTEXT_DIR));
+}
+if (POSTGRES_CONNECTION_STRING) {
+  sources.push(new PostgresSource({ 
+    connectionString: POSTGRES_CONNECTION_STRING 
+  }));
 }
 
 // In-memory code store
@@ -281,4 +288,48 @@ app.get(
 );
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
-app.listen(PORT, () => console.log(`Lookup service running on port ${PORT}`));
+
+// Export app for testing
+export { app };
+
+// Only start server if this file is run directly (not imported)
+if (import.meta.url === `file://${process.argv[1]}`) {
+  app.listen(PORT, () => console.log(`Lookup service running on port ${PORT}`));
+}
+
+// Graceful shutdown handling
+process.on('SIGINT', async () => {
+  console.log('Received SIGINT, shutting down gracefully...');
+  
+  // Close PostgreSQL connections
+  for (const source of sources) {
+    if (source instanceof PostgresSource && typeof source.close === 'function') {
+      try {
+        await source.close();
+        console.log('PostgreSQL connections closed');
+      } catch (err) {
+        console.error('Error closing PostgreSQL connections:', err);
+      }
+    }
+  }
+  
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('Received SIGTERM, shutting down gracefully...');
+  
+  // Close PostgreSQL connections
+  for (const source of sources) {
+    if (source instanceof PostgresSource && typeof source.close === 'function') {
+      try {
+        await source.close();
+        console.log('PostgreSQL connections closed');
+      } catch (err) {
+        console.error('Error closing PostgreSQL connections:', err);
+      }
+    }
+  }
+  
+  process.exit(0);
+});

@@ -2,6 +2,46 @@
 
 All notable changes implemented on this date.
 
+## 2025-06-09
+
+### 🆕 Added
+
+* **PostgreSQL Source**: Added `PostgresSource` class to support querying PostgreSQL databases for breach data
+  * Configurable via `POSTGRES_CONNECTION_STRING` environment variable
+  * Includes connection pooling for performance and reliability
+  * Supports graceful shutdown with proper connection cleanup
+  * Added to both server.js and search.js CLI tool
+
+* **Comprehensive Test Suite**: Reorganized and enhanced testing infrastructure
+  * Created proper directory structure: `tests/unit/`, `tests/integration/`, `tests/helpers/`, `tests/fixtures/`
+  * Added unit tests for all source classes (Source, PlaintextDirSource, PostgresSource, ShardSource)
+  * Created integration tests for data source functionality and basic API testing
+  * Added test configuration helpers and mock data fixtures
+  * Integrated test coverage reporting with c8 (66% line coverage achieved)
+  * Created enhanced test runner script with coverage support
+
+* **Test Dependencies and Configuration**:
+  * Added mocha, chai, supertest, nyc, sinon, and c8 for comprehensive testing
+  * Created `.mocharc.json` and `.c8rc.json` configuration files
+  * Added npm test scripts for unit, integration, and coverage testing
+
+### 🔄 Changed
+
+* **Data Sources Architecture**: Extended pluggable sources to include PostgreSQL database queries
+* **Environment Configuration**: Added `POSTGRES_CONNECTION_STRING` to .env.example and documentation
+* **Documentation**: Updated README.md with PostgreSQL source configuration and schema requirements
+* **Test Structure**: Moved integration and utility scripts from root to `tests/` and `scripts/` directories
+* **Server Export**: Modified server.js to export app for testing while maintaining standalone functionality
+
+### 🛠️ Fixed
+
+* **PostgresSource**: Fixed constructor validation and connection management to prevent double-close errors
+* **ShardSource**: Fixed case-insensitive email hashing to normalize email case internally
+* **Test Runner**: Fixed template literal syntax errors in scripts/test-runner.js
+* **Coverage Reporting**: Migrated from nyc to c8 for better ESM module support and working coverage reports
+
+---
+
 ## 2025-05-31
 
 ### 🆕 Added

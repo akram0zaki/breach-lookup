@@ -130,6 +130,25 @@ This service uses a **pluggable sources** architecture to query multiple breach 
   2. Uses a **case-insensitive grep** to scan for `^email[:; ]` and parses key–value pairs.
   3. Returns plaintext passwords with `"source": "Other"` for clarity.
 
+### PostgresSource (PostgreSQL Database)
+- **Configuration**: Set `POSTGRES_CONNECTION_STRING` in `.env` to a PostgreSQL connection string.
+- **Connection String Format**: `postgresql://username:password@host:port/database`
+- **Database Schema**: Expected table structure:
+  ```sql
+  CREATE TABLE breaches (
+    email_norm VARCHAR(255),  -- normalized email address
+    password TEXT,            -- password or hash
+    source VARCHAR(255),      -- breach source name
+    is_hash BOOLEAN,          -- whether password is hashed
+    hash_type VARCHAR(50)     -- type of hash (if applicable)
+  );
+  CREATE INDEX idx_breaches_email_norm ON breaches(email_norm);
+  ```
+- **Lookup Process**:
+  1. Email is normalized (trimmed and lowercased).
+  2. Database is queried using the normalized email as a direct match.
+  3. Results are returned with consistent field mapping to match other sources.
+
 ---
 
 ## Throttling
@@ -182,6 +201,9 @@ JWT_SECRET=<jwt-secret>
 
 # Shard path
 SHARD_DIRS=/mnt/data/shards,...
+
+# PostgreSQL connection (optional)
+POSTGRES_CONNECTION_STRING=postgresql://username:password@host:port/database
 
 # Cloudflare Turnstile
 TURNSTILE_SECRET=<turnstile-secret>
@@ -247,6 +269,119 @@ Used during the development and testing of this project to ensure it is function
 npm install dotenv
 
 node search.js user@example.com
+```
+
+---
+
+## Testing Framework
+
+The project includes a comprehensive test suite built with **Mocha**, **Chai**, and **Supertest** to ensure code quality and reliability. The testing infrastructure is organized for maintainability and provides detailed coverage reporting.
+
+### Test Organization
+
+```
+tests/
+├── unit/                    # Unit tests for individual components
+│   ├── base-source.test.js       # Source base class tests
+│   ├── plaintext-source.test.js  # PlaintextDirSource tests
+│   ├── postgres-source.test.js   # PostgresSource tests
+│   └── shard-source.test.js      # ShardSource tests
+├── integration/             # Integration tests for full workflows
+│   ├── basic-api.test.js          # Basic API functionality
+│   └── data-sources.test.js      # Multi-source integration tests
+├── helpers/                 # Test utilities and configuration
+│   ├── auth-helper.js             # JWT and authentication utilities
+│   └── test-config.js             # Environment and mock configuration
+└── fixtures/                # Mock data and test fixtures
+    ├── mock-data.js               # Shared mock data structures
+    └── sample-breach-data.json    # Sample breach data for testing
+```
+
+### Test Configuration
+
+The test suite uses several configuration files:
+
+- **`.mocharc.json`**: Mocha test runner configuration with timeouts and reporters
+- **`.c8rc.json`**: Coverage reporting configuration with thresholds
+- **`tests/helpers/test-config.js`**: Centralized test environment setup
+
+### Running Tests
+
+#### All Tests
+```bash
+npm test                    # Run complete test suite (unit + integration)
+```
+
+#### Test Categories
+```bash
+npm run test:unit          # Run only unit tests (faster, no external dependencies)
+npm run test:integration   # Run only integration tests (includes API tests)
+```
+
+#### Coverage Reports
+```bash
+npm run test:coverage      # Run tests with coverage analysis and HTML reports
+```
+
+The coverage command generates both text output and detailed HTML reports in the `coverage/` directory.
+
+### Coverage Thresholds
+
+The project maintains high code quality standards with the following coverage requirements:
+
+| Metric    | Threshold | Current Status |
+|-----------|-----------|----------------|
+| Lines     | 60%       | ✅ 66.37%      |
+| Functions | 80%       | ✅ 100%        |
+| Branches  | 70%       | ✅ 81.25%      |
+| Statements| 60%       | ✅ 66.37%      |
+
+### Test Features
+
+#### Unit Tests
+- **Source Classes**: Comprehensive testing of all data source implementations
+- **Mock Dependencies**: Uses Sinon for stubbing external dependencies (file system, database connections)
+- **Error Handling**: Validates proper error handling and graceful degradation
+- **Input Validation**: Tests edge cases, malformed inputs, and boundary conditions
+
+#### Integration Tests
+- **API Endpoints**: Tests complete request/response cycles
+- **Multi-Source Queries**: Validates data source coordination and result aggregation
+- **Performance**: Includes timing tests to ensure reasonable response times
+- **Authentication**: Tests JWT token generation and validation workflows
+
+#### Test Utilities
+- **Auth Helper**: Provides utilities for generating test JWT tokens and API authentication
+- **Mock Data**: Consistent test data across all test suites
+- **Environment Config**: Automatic test environment detection and configuration
+
+### Key Testing Practices
+
+1. **Error Resilience**: All tests validate that database connection failures and missing files return empty arrays rather than throwing exceptions
+2. **Case Sensitivity**: Email normalization and hashing consistency is thoroughly tested
+3. **Performance**: Integration tests include timing assertions to catch performance regressions
+4. **Isolation**: Unit tests use mocks to avoid dependencies on external services or file systems
+5. **Real-world Scenarios**: Integration tests use realistic data patterns and API flows
+
+### Viewing Coverage Reports
+
+After running `npm run test:coverage`, open `coverage/index.html` in a browser to see:
+
+- **File-by-file coverage breakdown**
+- **Line-by-line coverage highlighting**
+- **Branch coverage analysis**
+- **Uncovered code identification**
+
+### Development Testing
+
+During development, you can run specific test files:
+
+```bash
+# Test a specific source class
+npx mocha tests/unit/postgres-source.test.js
+
+# Test with file watching (requires nodemon)
+npx nodemon --exec "npm test" --watch tests/ --watch *.js
 ```
 
 ---

@@ -13,6 +13,7 @@
 import 'dotenv/config';
 import ShardSource from './ShardSource.js';
 import PlaintextDirSource from './PlaintextDirSource.js';
+import PostgresSource from './PostgresSource.js';
 import crypto from 'crypto';
 
 async function main() {
@@ -22,7 +23,7 @@ async function main() {
     process.exit(1);
   }
 
-  const { EMAIL_HASH_KEY, SHARD_DIRS, PLAINTEXT_DIR } = process.env;
+  const { EMAIL_HASH_KEY, SHARD_DIRS, PLAINTEXT_DIR, POSTGRES_CONNECTION_STRING } = process.env;
   const sources = [];
 
   // JSONL shard source
@@ -38,8 +39,15 @@ async function main() {
     sources.push(new PlaintextDirSource(PLAINTEXT_DIR));
   }
 
+  // PostgreSQL database source
+  if (POSTGRES_CONNECTION_STRING) {
+    sources.push(new PostgresSource({ 
+      connectionString: POSTGRES_CONNECTION_STRING 
+    }));
+  }
+
   if (sources.length === 0) {
-    console.error('ERROR: No data sources configured. Please set SHARD_DIRS and/or PLAINTEXT_DIR in .env');
+    console.error('ERROR: No data sources configured. Please set SHARD_DIRS, PLAINTEXT_DIR, and/or POSTGRES_CONNECTION_STRING in .env');
     process.exit(1);
   }
 
@@ -67,6 +75,17 @@ async function main() {
     console.log('No records found.');
   } else {
     results.forEach(rec => console.log(JSON.stringify(rec, null, 2)));
+  }
+
+  // Close PostgreSQL connections
+  for (const src of sources) {
+    if (src instanceof PostgresSource && typeof src.close === 'function') {
+      try {
+        await src.close();
+      } catch (err) {
+        console.error(`Error closing source ${src.constructor.name}:`, err);
+      }
+    }
   }
 }
 
