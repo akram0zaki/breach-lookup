@@ -42,6 +42,62 @@
     .hidden { display:none; }
     #query-time { font-size: 0.9rem; color: #555; margin-top: 1rem; text-align: center; }
     #loading-banner { font-size: 1rem; color: #007BFF; margin-top: 1rem; text-align: center; }
+    
+    /* Password masking styles */
+    .password-container { display: inline-flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+    .password-text { font-family: monospace; background: #f5f5f5; padding: 0.25rem 0.5rem; border-radius: 3px; word-break: break-all; }
+    .masked-password { letter-spacing: 2px; }
+    .toggle-password-btn { 
+      background: #6c757d; 
+      color: white; 
+      border: none; 
+      padding: 0.25rem 0.5rem; 
+      border-radius: 3px; 
+      cursor: pointer; 
+      font-size: 0.8rem;
+      width: auto;
+      margin: 0;
+    }
+    .toggle-password-btn:hover { background: #5a6268; }
+      
+    /* Results header styles */
+    .results-header { 
+      display: flex; 
+      justify-content: space-between; 
+      align-items: center; 
+      margin-bottom: 1rem; 
+      padding-bottom: 0.5rem; 
+      border-bottom: 2px solid #007BFF; 
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    .results-title { margin: 0; color: #007BFF; }
+    .unmask-all-btn { 
+      background: #28a745; 
+      padding: 0.5rem 1rem; 
+      font-size: 0.9rem;
+      width: auto;
+      margin: 0;
+    }
+    .unmask-all-btn:hover { background: #218838; }
+    
+    /* Bottom buttons container */
+    .bottom-buttons {
+      display: flex;
+      gap: 1rem;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+    }
+    .bottom-buttons button {
+      flex: 1;
+      min-width: 120px;
+    }
+    .close-btn {
+      background: #dc3545;
+    }
+    .close-btn:hover {
+      background: #c82333;
+    }
   </style>
 </head>
 <body>
@@ -82,7 +138,10 @@
     </div>
     <div id="query-time"></div>
     <div id="results" class="hidden"></div>
-    <button id="reset-btn" class="hidden">Start Over</button>
+    <div class="bottom-buttons hidden" id="bottom-buttons">
+      <button id="reset-btn">Start Over</button>
+      <button id="close-btn" class="close-btn">Close Window</button>
+    </div>
   </main>
   <script>
     window.addEventListener('DOMContentLoaded', () => {
@@ -106,6 +165,8 @@
       const resultsDiv = document.getElementById('results');
 	  const queryTime = document.getElementById('query-time');
       const resetBtn = document.getElementById('reset-btn');
+      const closeBtn = document.getElementById('close-btn');
+      const bottomButtons = document.getElementById('bottom-buttons');
 
       // ===== UI helpers =====
       function showToast(msg, duration=4000) {
@@ -122,6 +183,76 @@
         errorBanner.textContent = '';
         errorBanner.classList.add('hidden');
 		errorBanner.style.display = 'none';
+      }
+
+      // ===== Password masking functions =====
+      function maskPassword(password) {
+        return '●'.repeat(Math.min(password.length, 12));
+      }
+
+      function createPasswordElement(password, recordId) {
+        const container = document.createElement('div');
+        container.className = 'password-container';
+        
+        const passwordSpan = document.createElement('span');
+        passwordSpan.className = 'password-text masked-password';
+        passwordSpan.textContent = maskPassword(password);
+        passwordSpan.dataset.original = password;
+        passwordSpan.dataset.masked = 'true';
+        
+        const toggleBtn = document.createElement('button');
+        toggleBtn.className = 'toggle-password-btn';
+        toggleBtn.textContent = 'Show';
+        toggleBtn.onclick = () => togglePassword(passwordSpan, toggleBtn);
+        
+        container.appendChild(passwordSpan);
+        container.appendChild(toggleBtn);
+        
+        return container;
+      }
+
+      function togglePassword(passwordElement, buttonElement) {
+        const isMasked = passwordElement.dataset.masked === 'true';
+        
+        if (isMasked) {
+          passwordElement.textContent = passwordElement.dataset.original;
+          passwordElement.classList.remove('masked-password');
+          passwordElement.dataset.masked = 'false';
+          buttonElement.textContent = 'Hide';
+        } else {
+          passwordElement.textContent = maskPassword(passwordElement.dataset.original);
+          passwordElement.classList.add('masked-password');
+          passwordElement.dataset.masked = 'true';
+          buttonElement.textContent = 'Show';
+        }
+      }
+
+      function toggleAllPasswords(toggleAllBtn) {
+        const allPasswordElements = document.querySelectorAll('.password-text');
+        const allToggleButtons = document.querySelectorAll('.toggle-password-btn');
+        
+        // Check if any passwords are currently masked
+        const anyMasked = Array.from(allPasswordElements).some(el => el.dataset.masked === 'true');
+        
+        if (anyMasked) {
+          // Show all passwords
+          allPasswordElements.forEach((passwordElement, index) => {
+            if (passwordElement.dataset.masked === 'true') {
+              const buttonElement = allToggleButtons[index];
+              togglePassword(passwordElement, buttonElement);
+            }
+          });
+          toggleAllBtn.textContent = 'Hide All Passwords';
+        } else {
+          // Hide all passwords
+          allPasswordElements.forEach((passwordElement, index) => {
+            if (passwordElement.dataset.masked === 'false') {
+              const buttonElement = allToggleButtons[index];
+              togglePassword(passwordElement, buttonElement);
+            }
+          });
+          toggleAllBtn.textContent = 'Show All Passwords';
+        }
       }
 
       // ===== Step 1: Send code =====
@@ -213,7 +344,7 @@
         }
       });
 
-      // ===== Step 3: Reset =====
+      // ===== Step 3: Lookup =====
 	  document.getElementById('lookup-btn').addEventListener('click', async () => {
 		const lookupBtn = document.getElementById('lookup-btn');
 		lookupBtn.disabled = true;
@@ -227,16 +358,66 @@
 
 		if (res.ok) {
 		  const records = await res.json();
-		  resultsDiv.innerHTML = records.length
-			? records.map(r => `<div class="record"><strong>Source:</strong> ${r.source}<br><strong>Email:</strong> ${r.email}<br><strong>Password:</strong> ${r.password}<br><strong>Hash:</strong> ${r.is_hash}</div>`).join('')
-			: '<p>No breach records found.</p>';
+		  
+		  if (records.length) {
+		    // Create results header with unmask all button
+		    const resultsHeader = document.createElement('div');
+		    resultsHeader.className = 'results-header';
+		    
+		    const resultsTitle = document.createElement('h3');
+		    resultsTitle.className = 'results-title';
+		    resultsTitle.textContent = `Found ${records.length} breach record${records.length > 1 ? 's' : ''}`;
+		    
+		    const unmaskAllBtn = document.createElement('button');
+		    unmaskAllBtn.className = 'unmask-all-btn';
+		    unmaskAllBtn.textContent = 'Show All Passwords';
+		    unmaskAllBtn.onclick = () => toggleAllPasswords(unmaskAllBtn);
+		    
+		    resultsHeader.appendChild(resultsTitle);
+		    resultsHeader.appendChild(unmaskAllBtn);
+		    
+		    // Create records container  
+		    const recordsContainer = document.createElement('div');
+		    
+		    records.forEach((r, index) => {
+		      const recordDiv = document.createElement('div');
+		      recordDiv.className = 'record';
+		      
+		      const sourceElement = document.createElement('div');
+		      sourceElement.innerHTML = `<strong>Source:</strong> ${r.source}`;
+		      
+		      const emailElement = document.createElement('div');
+		      emailElement.innerHTML = `<strong>Email:</strong> ${r.email}`;
+		      
+		      const passwordLabel = document.createElement('strong');
+		      passwordLabel.textContent = 'Password: ';
+		      
+		      const passwordContainer = createPasswordElement(r.password, index);
+		      
+		      const hashElement = document.createElement('div');
+		      hashElement.innerHTML = `<strong>Hash:</strong> ${r.is_hash}`;
+		      
+		      recordDiv.appendChild(sourceElement);
+		      recordDiv.appendChild(emailElement);
+		      recordDiv.appendChild(passwordLabel);
+		      recordDiv.appendChild(passwordContainer);
+		      recordDiv.appendChild(hashElement);
+		      
+		      recordsContainer.appendChild(recordDiv);
+		    });
+		    
+		    resultsDiv.innerHTML = '';
+		    resultsDiv.appendChild(resultsHeader);
+		    resultsDiv.appendChild(recordsContainer);
+		  } else {
+		    resultsDiv.innerHTML = '<p>No breach records found.</p>';
+		  }
+		  
 		  resultsDiv.classList.remove('hidden');
-		  resetBtn.classList.remove('hidden');
+		  bottomButtons.classList.remove('hidden');
 		} else {
 		  showError('Lookup failed');
 		}
-
-
       });
 
       resetBtn.addEventListener('click', () => {
@@ -248,9 +429,13 @@
         step2.classList.add('hidden');
         step3.classList.add('hidden');
         resultsDiv.classList.add('hidden');
-        resetBtn.classList.add('hidden');
+        bottomButtons.classList.add('hidden');
         document.getElementById('query-time').textContent = '';
         window.turnstile.reset();
+      });
+
+      closeBtn.addEventListener('click', () => {
+        window.close();
       });
     });
   </script>
